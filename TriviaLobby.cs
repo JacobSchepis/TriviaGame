@@ -1,142 +1,103 @@
-﻿using TriviaGame.ClientActions;
+﻿using System.Runtime.InteropServices;
+using TriviaGame.Phases;
 
 namespace TriviaGame
 {
     public class TriviaLobby
     {
-        private Dictionary<string, GameBehavior> clients = new Dictionary<string, GameBehavior>();
-        private Dictionary<string, TriviaTeam> teams = new Dictionary<string, TriviaTeam>();
-
-        public int PlayerCount { get => clients.Count - 1; }
-
-        private Queue<GamePhase> _phases;
-        private GamePhase _currentPhase;
-
-        private AIService _aiService;
-
-        
-
-
-
         public string Id { get; private set; }
+
+        private readonly SemaphoreSlim _gate = new(1, 1);
+        private readonly Queue<IGamePhase> _phases = new();
+        private IGamePhase? _currentPhase;
+        private readonly LobbyContext _ctx;
 
         public TriviaLobby(string id)
         {
             Id = id;
+            _ctx = new LobbyContext(id);
             Console.WriteLine("new lobby is created");
         }
 
-        public void JoinAsHost(GameBehavior gameBehavior)
+        public void JoinAsHost(string clientId)
         {
-            if (clients.ContainsKey("host")) return;
-
-            clients["host"] = gameBehavior;
+            _ctx.HostId = clientId;
         }
 
-        public bool JoinLobby(string playerName, GameBehavior gameBehavior)
+        public bool JoinLobby(string playerId)
         {
-            if (playerName is null || gameBehavior is null)
+            if (playerId is null)
                 return false;
 
-            if (clients.ContainsKey(playerName))
+            if (_ctx.Clients.Contains(playerId))
                 return false;
 
-            clients.Add(playerName, gameBehavior);
-            Console.WriteLine($"Player joined: {playerName}");
+            _ctx.Clients.Add(playerId);
+            Console.WriteLine($"Player joined: {playerId}");
             return true;
         }
 
-        public void RecieveMessage(ClientMessage msg, GameBehavior sender)
+        public async Task StartAsync(CancellationToken ct = default)
         {
-            switch (msg.Action)
+            await _gate.WaitAsync(ct);
+            try
             {
-                case "leave":
-                    break;
-
-                default:
-                    HandleClientMessage(msg, sender);
-                    break;
+                if (_currentPhase != null) return;
+                await AdvancePhase_NoLock(ct);
             }
+            finally { _gate.Release(); }
         }
 
-        private void SendMessageToHost(object msg)
+        public async Task RecieveClientMessage(ClientMessage msg, CancellationToken ct = default)
         {
 
+            // (2) Route to the current phase
+            await _gate.WaitAsync(ct);
+            try
+            {
+                if (_currentPhase != null)
+                {
+                    await _currentPhase.HandleAsync(_ctx, msg, ct);
+                    if (_currentPhase.IsComplete)
+                        await AdvancePhase_NoLock(ct);
+                }
+                // else: ignore or buffer, depending on your needs
+            }
+            finally { _gate.Release(); }
         }
 
-        private void SendMessageToAllPlayers(object msg)
+        private async Task AdvancePhase_NoLock(CancellationToken ct)
         {
+            // exit previous
+            if (_currentPhase != null)
+            {
+                await _currentPhase.OnExitAsync(_ctx, ct);
+                await _currentPhase.DisposeAsync();
+                _currentPhase = null;
+            }
 
-        }
+            if (_phases.Count == 0)
+                return; // no more phases
 
-        private void SendMessageToPlayer(object msg, string playerName)
-        {
-
-        }
-
-        #region game stuff
-        public async Task StartNextPhaseAsync()
-        {
             _currentPhase = _phases.Dequeue();
-
-            var aiLine = await _currentPhase.GetAIDialogueAsync(this, _aiService);
-            if (aiLine != null)
-                await _aiService.PlayVoiceLineAsync(aiLine);
-
-            await _currentPhase.OnEnterAsync(this);
+            await _currentPhase.OnEnterAsync(_ctx, ct);
         }
 
-        public void HandleClientMessage(ClientMessage msg, GameBehavior sender)
-        {
-            _currentPhase?.HandleMessage(msg, sender, this);
-
-            if (_currentPhase?.IsComplete(this) == true)
-                _ = StartNextPhaseAsync();
-        }
-
-        public void BroadcastClientEvent(string v, object value)
-        {
-            throw new NotImplementedException();
-        }
-
-
-
-
-
-        #endregion
     }
 
-
-
-    public class TriviaTeam
+    public sealed class LobbyContext
     {
-        public List<string> Members = new List<string>();
-        public string TeamName = "";
-        public int Points = 0;
+        public string LobbyId { get; }
+        public string HostId { get; set; } = "";
+        public List<string> Clients { get; } = new();
+        public Dictionary<string, string> Players { get; } = new();
+        public int QuestionIndex { get; set; }
+        public Dictionary<string, int> Scores { get; } = new();
+        public Dictionary<string, string> LatestAnswers { get; } = new();
 
-        public void AddMember(string member)
-        {
-            if (Members.Contains(member)) return;
-            Members.Add(member);
-        }
+        public Action<string, object>? SendTo;
+        public Action<object>? SendAll;
 
-        public void RemoveMember(string member)
-        {
-            if (!Members.Contains(member)) return;
-            Members.Remove(member);
-        }
+        public LobbyContext(string lobbyId) => LobbyId = lobbyId;
     }
-
-    public class Player
-    {
-        public string Name;
-    }
-
-    public enum LobbyState
-    {
-        Open,
-        InGame,
-        Finished
-    }
-
 }

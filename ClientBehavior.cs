@@ -5,11 +5,13 @@ using WebSocketSharp.Server;
 
 namespace TriviaGame
 {
-    public class GameBehavior : WebSocketBehavior
+    public class ClientBehavior : WebSocketBehavior
     {
         public required LobbyManager LobbyManager;
+        public required ClientHub ClientHub;
+
         private TriviaLobby? myLobby;
-        public string MyPlayerId;
+        public string MyClientId = "";
 
         protected override void OnOpen()
         {
@@ -43,6 +45,9 @@ namespace TriviaGame
                 return;
             }
 
+            //something here to check if there is a client id and to check the Client hub
+            //if client doesnt exist, register them
+
             switch (message.Action)
             {
                 case "join":
@@ -51,6 +56,9 @@ namespace TriviaGame
 
                 case "host":
                     CreateLobby(message);
+                    break;
+                case "reconnect":
+                    ReconnectToLobby(message);
                     break;
                 default:
                     SendMessageToLobby(message);
@@ -61,16 +69,16 @@ namespace TriviaGame
         private void SendMessageToLobby(ClientMessage message)
         {
             if (myLobby is null) return;
-            myLobby.RecieveMessage(message);
+            myLobby.RecieveClientMessage(message);
         }
 
         public void JoinLobby(ClientMessage message)
         {
             var lobby = LobbyManager.JoinLobby(message.LobbyCode);
 
-            if (lobby is null || message.PlayerName is null) return;
+            if (lobby is null) return;
 
-            var completed = lobby.JoinLobby(message.PlayerName, this);
+            var completed = lobby.JoinLobby(MyClientId);
 
             if (completed is false)
             {
@@ -79,7 +87,6 @@ namespace TriviaGame
             }
             
             myLobby = lobby;
-            myPlayerId = message.PlayerName;
         }
 
         private void CreateLobby(ClientMessage message)
@@ -88,8 +95,13 @@ namespace TriviaGame
             
             if (lobby is null) return;
             myLobby = lobby;
-            myLobby.JoinAsHost(this);
+            myLobby.JoinAsHost(MyClientId);
             Send(myLobby.Id);
+        }
+
+        private void ReconnectToLobby(ClientMessage message)
+        {
+            //reconnect logic here
         }
 
         public void SendMessage(string msg)
@@ -100,12 +112,13 @@ namespace TriviaGame
 
     public class ClientMessage
     {
-        public string Action { get; set; }
-        public string PlayerName { get; set; }
-        public string LobbyCode { get; set; }
+        public string ClientId { get; set; } = "";
+        public string Action { get; set; } = "";
+        public string PlayerName { get; set; } = "";
+        public string LobbyCode { get; set; } = "";
 
-        public string Message { get; set; }
+        public string Message { get; set; } = "";
 
-        public string Answer {  get; set; }
+        public string Answer { get; set; } = "";
     }
 }

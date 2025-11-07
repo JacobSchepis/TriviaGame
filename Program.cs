@@ -11,17 +11,20 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 builder.Services.AddSingleton<LobbyManager>();
+builder.Services.AddSingleton<ClientHub>();
 
 var app = builder.Build();
 
 var lobbyManager = app.Services.GetRequiredService<LobbyManager>();
+var clientHub = app.Services.GetRequiredService<ClientHub>();
 
 var wssv = new WebSocketServer("ws://0.0.0.0:5000");
 wssv.AddWebSocketService("/ws", () =>
 {
-    return new GameBehavior
+    return new ClientBehavior
     {
-        LobbyManager = lobbyManager
+        LobbyManager = lobbyManager,
+        ClientHub = clientHub
     };
 });
 wssv.Start();
